@@ -1,24 +1,33 @@
-#include <netinet/in.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
 #include <iostream>
+#include <cstring>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #define PORT 8222
 
-int main(int argc, char const* argv[]) {
-    // Buffer for messages to be sent and received
-    char msg[1500];
+struct Message {
+    char username[50];
+    char message[1000];
+};
 
+void SerializeMessage(const Message& msg, char* buffer) {
+    // Copy the struct to the buffer
+    memcpy(buffer, &msg, sizeof(Message));
+}
+
+void DeserializeMessage(const char* buffer, Message& msg) {
+    // Copy data from the buffer to the struct
+    memcpy(&msg, buffer, sizeof(Message));
+}
+
+int main() {
     // Create the socket on the server side
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        std::cout << "Error creating the socket" << std::endl;
+        std::cerr << "Error creating the socket" << std::endl;
         return -1;
-    }
-    else {
+    } else {
         std::cout << "Socket Created" << std::endl;
     }
 
@@ -28,10 +37,9 @@ int main(int argc, char const* argv[]) {
     addr.sin_port = htons(PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
     if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cout << "Error binding socket" << std::endl;
+        std::cerr << "Error binding socket" << std::endl;
         return -1;
-    }
-    else {
+    } else {
         std::cout << "Binded with socket" << std::endl;
     }
 
@@ -43,42 +51,44 @@ int main(int argc, char const* argv[]) {
     socklen_t newSockAddrSize = sizeof(newSockAddr);
     int newSd = accept(sockfd, (sockaddr*)&newSockAddr, &newSockAddrSize);
     if (newSd < 0) {
-        std::cout << "Error accepting request from client" << std::endl;
+        std::cerr << "Error accepting request from client" << std::endl;
         return -1;
     }
     std::cout << "Connected with client!" << std::endl;
 
-    while (1) {
+    while (true) {
         // Receive a message from the client
-        std::cout << "Awaiting client response..." << std::endl;
-        memset(&msg, 0, sizeof(msg));  // Clear the buffer
-
-        // Receive a message from the client
-        ssize_t bytesRead = recv(newSd, msg, sizeof(msg), 0);
+        char buffer[sizeof(Message)];
+        memset(&buffer, 0, sizeof(buffer)); // Clear the buffer
+        ssize_t bytesRead = recv(newSd, buffer, sizeof(buffer), 0);
 
         if (bytesRead <= 0) {
             std::cerr << "Error receiving message from the client" << std::endl;
             break;
         }
 
-        // Check if the client wants to exit
-        if (!strcmp(msg, "exit")) {
-            std::cout << "Client has quit the session" << std::endl;
-            break;
-        }
+        // Deserialize the received message
+        Message receivedMessage;
+        DeserializeMessage(buffer, receivedMessage);
 
-        std::cout << "Client: " << msg << std::endl;
-        std::cout << ">";
+        // Display the received message
+        std::cout << receivedMessage.username << ": " << receivedMessage.message << std::endl;
 
-        std::string data;
-        getline(std::cin, data);
+        // Get server's response
+        Message responseMessage;
+        std::cout << "Enter your response: ";
+        std::cin.getline(responseMessage.message, sizeof(responseMessage.message));
 
-        // Send the message to the client
-        send(newSd, data.c_str(), data.length(), 0);
+        // Serialize the response message to a byte stream
+        char responseBuffer[sizeof(Message)];
+        SerializeMessage(responseMessage, responseBuffer);
 
-        if (data == "exit") {
-            // Send to the client that the server has closed the connection
-            send(newSd, (char*)&msg, strlen(msg), 0);
+        // Send the response to the client
+        send(newSd, responseBuffer, sizeof(responseBuffer), 0);
+
+        // Check for exit condition
+        if (strcmp(responseMessage.message, "exit") == 0) {
+            std::cout << "Server has closed the connection" << std::endl;
             break;
         }
     }
